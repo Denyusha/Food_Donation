@@ -285,27 +285,43 @@ router.post('/:id/accept', [
     await donation.save();
 
     // Award points
-    await req.user.addPoints(5);
+    try {
+      if (req.user && typeof req.user.addPoints === 'function') {
+        await req.user.addPoints(5);
+      }
+    } catch (pointsError) {
+      console.error('Error awarding points:', pointsError);
+      // Continue even if points fail
+    }
 
     // Notify donor
-    const io = req.app.get('io');
-    await sendNotification(
-      io,
-      donation.donorId,
-      'donation_accepted',
-      'Donation Accepted',
-      `${req.user.name} has accepted your donation "${donation.foodName}"`,
-      { donationId: donation._id, receiverId: req.user._id }
-    );
+    try {
+      const io = req.app.get('io');
+      if (donation.donorId && io) {
+        await sendNotification(
+          io,
+          donation.donorId,
+          'donation_accepted',
+          'Donation Accepted',
+          `${req.user.name} has accepted your donation "${donation.foodName}"`,
+          { donationId: donation._id, receiverId: req.user._id }
+        );
+      }
+    } catch (notifyError) {
+      console.error('Error sending notification:', notifyError);
+      // Continue even if notification fails
+    }
 
     res.json({
       success: true,
       donation
     });
   } catch (error) {
+    console.error('Accept donation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error accepting donation'
+      message: 'Server error accepting donation',
+      error: error.message
     });
   }
 });
@@ -419,7 +435,8 @@ router.get('/:id/tracking', protect, async (req, res) => {
     const timeline = [
       { step: 'created', label: 'Donation created', at: donation.createdAt, done: true },
       { step: 'accepted', label: 'Accepted by NGO', at: donation.acceptedAt, done: !!donation.acceptedAt },
-      { step: 'volunteer_assigned', label: 'Volunteer accepted delivery', at: donation.pickedAt, done: !!donation.volunteerId },
+      { step: 'pickup_requested', label: 'Pickup requested', at: donation.pickupRequest?.requestedAt, done: !!donation.pickupRequest?.requestedAt },
+      { step: 'volunteer_assigned', label: 'Volunteer assigned', at: donation.pickedAt, done: !!donation.volunteerId },
       { step: 'picked', label: 'Picked up from donor', at: donation.pickedAt, done: donation.status === 'picked' || donation.status === 'completed' },
       { step: 'completed', label: 'Delivered to NGO', at: donation.completedAt, done: donation.status === 'completed' }
     ];
@@ -433,10 +450,12 @@ router.get('/:id/tracking', protect, async (req, res) => {
         donorLocation,
         receiverLocation,
         volunteerLocation,
+        pathHistory: donation.pathHistory || [],
         donorName: donation.donorId?.name,
         receiverName: donation.receiverId?.name,
         volunteerName: donation.volunteerId?.name,
         volunteerId: donation.volunteerId?._id,
+        pickupRequest: donation.pickupRequest,
         timeline,
         updatedAt: new Date()
       }
@@ -468,16 +487,167 @@ router.post('/:id/volunteer-location', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'lat and lng required' });
     }
 
-    donation.volunteerLocation = {
+    const locationUpdate = {
       lat: parseFloat(lat),
       lng: parseFloat(lng),
       updatedAt: new Date()
     };
+
+    donation.volunteerLocation = locationUpdate;
+    
+    // Add to path history
+    donation.pathHistory.push({
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      timestamp: new Date(),
+      type: 'volunteer'
+    });
+    
     await donation.save();
 
-    res.json({ success: true, volunteerLocation: donation.volunteerLocation });
+    // Broadcast location update to all connected clients viewing this donation
+    const io = req.app.get('io');
+    if (io) {
+      io.emit(`donation-${donation._id}-location`, {
+        donationId: donation._id,
+        volunteerLocation: locationUpdate,
+        pathHistory: donation.pathHistory
+      });
+    }
+
+    res.json({ success: true, volunteerLocation: donation.volunteerLocation, pathHistory: donation.pathHistory });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error updating location' });
+  }
+});
+
+// @route   POST /api/donations/:id/request-pickup
+// @desc    NGO requests a volunteer for pickup
+// @access  Private (Receiver)
+router.post('/:id/request-pickup', [
+  protect,
+  authorize('receiver', 'admin')
+], async (req, res) => {
+  try {
+    const donation = await Donation.findById(req.params.id);
+
+    if (!donation) {
+      return res.status(404).json({ success: false, message: 'Donation not found' });
+    }
+
+    if (donation.status !== 'accepted') {
+      return res.status(400).json({ success: false, message: 'Donation must be accepted before requesting pickup' });
+    }
+
+    if (donation.volunteerId) {
+      return res.status(400).json({ success: false, message: 'Donation already has a volunteer assigned' });
+    }
+
+    donation.pickupRequest = {
+      requestedAt: new Date(),
+      requestedBy: req.user._id,
+      status: 'pending'
+    };
+    await donation.save();
+
+    // Notify nearby volunteers
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('pickup-requested', {
+        donationId: donation._id,
+        foodName: donation.foodName,
+        pickupLocation: donation.location,
+        ngoName: req.user.name || req.user.organizationName,
+        requestedAt: donation.pickupRequest.requestedAt
+      });
+    }
+
+    res.json({ success: true, message: 'Pickup request sent to volunteers', donation });
+  } catch (error) {
+    console.error('Request pickup error:', error);
+    res.status(500).json({ success: false, message: 'Server error requesting pickup' });
+  }
+});
+
+// @route   POST /api/donations/:id/respond-pickup
+// @desc    Volunteer accepts or declines pickup request
+// @access  Private (Volunteer)
+router.post('/:id/respond-pickup', [
+  protect,
+  authorize('volunteer', 'admin')
+], async (req, res) => {
+  try {
+    const { action } = req.body; // 'accept' or 'decline'
+    const donation = await Donation.findById(req.params.id)
+      .populate('donorId')
+      .populate('receiverId');
+
+    if (!donation) {
+      return res.status(404).json({ success: false, message: 'Donation not found' });
+    }
+
+    if (!donation.pickupRequest || donation.pickupRequest.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'No pending pickup request' });
+    }
+
+    if (donation.volunteerId) {
+      return res.status(400).json({ success: false, message: 'Donation already has a volunteer assigned' });
+    }
+
+    if (action === 'accept') {
+      donation.volunteerId = req.user._id;
+      donation.pickupRequest.status = 'accepted';
+      donation.status = 'picked';
+      donation.pickedAt = new Date();
+      
+      // Initialize path history with pickup point
+      donation.pathHistory = [{
+        lat: donation.location.coordinates.lat,
+        lng: donation.location.coordinates.lng,
+        timestamp: new Date(),
+        type: 'system'
+      }];
+      
+      await donation.save();
+
+      // Award points
+      await req.user.addPoints(20);
+
+      // Notify donor and receiver
+      const io = req.app.get('io');
+      if (donation.donorId) {
+        await sendNotification(
+          io,
+          donation.donorId._id,
+          'donation_picked',
+          'Volunteer Assigned',
+          `${req.user.name} has accepted the pickup request`,
+          { donationId: donation._id, volunteerId: req.user._id }
+        );
+      }
+
+      if (donation.receiverId) {
+        await sendNotification(
+          io,
+          donation.receiverId._id,
+          'donation_picked',
+          'Pickup Accepted',
+          `${req.user.name} is picking up the donation`,
+          { donationId: donation._id, volunteerId: req.user._id }
+        );
+      }
+
+      res.json({ success: true, message: 'Pickup accepted', donation });
+    } else if (action === 'decline') {
+      donation.pickupRequest.status = 'declined';
+      await donation.save();
+      res.json({ success: true, message: 'Pickup declined' });
+    } else {
+      res.status(400).json({ success: false, message: 'Invalid action. Use accept or decline' });
+    }
+  } catch (error) {
+    console.error('Respond pickup error:', error);
+    res.status(500).json({ success: false, message: 'Server error responding to pickup' });
   }
 });
 

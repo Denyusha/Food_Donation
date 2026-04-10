@@ -4,7 +4,7 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { FiMapPin, FiClock, FiPackage } from 'react-icons/fi';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
+import MapComponent from '../components/MapComponent';
 
 const DonationsList = () => {
   const { user } = useAuth();
@@ -65,19 +65,14 @@ const DonationsList = () => {
     }
   };
 
-  const mapContainerStyle = {
-    width: '100%',
-    height: '500px'
-  };
-
   if (loading) {
     return <LoadingSpinner />;
   }
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Available Donations</h1>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold">Available Donations</h1>
         <div className="flex gap-2">
           <button
             onClick={() => setViewMode('list')}
@@ -96,7 +91,7 @@ const DonationsList = () => {
 
       {/* Filters */}
       <div className="card mb-6">
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium mb-2">Status</label>
             <select
@@ -149,35 +144,35 @@ const DonationsList = () => {
 
       {/* List View */}
       {viewMode === 'list' && (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {donations.map((donation) => (
             <Link
               key={donation._id}
               to={`/donations/${donation._id}`}
-              className="card hover:shadow-lg transition-shadow"
+              className="card hover:shadow-lg transition-shadow p-4 sm:p-6"
             >
               <div className="flex justify-between items-start mb-2">
-                <h3 className="font-semibold text-lg">{donation.foodName}</h3>
+                <h3 className="font-semibold text-base sm:text-lg">{donation.foodName}</h3>
                 {donation.isEmergency && (
                   <span className="px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
                     Emergency
                   </span>
                 )}
               </div>
-              <p className="text-gray-600 dark:text-gray-400 mb-2">
+              <p className="text-gray-600 dark:text-gray-400 mb-2 text-sm sm:text-base">
                 <FiPackage className="inline mr-1" />
                 {donation.quantity} {donation.unit} • {donation.foodType}
               </p>
-              <p className="text-sm text-gray-500 mb-2">
+              <p className="text-xs sm:text-sm text-gray-500 mb-2">
                 <FiMapPin className="inline mr-1" />
                 {donation.location.address}
               </p>
               {donation.distance && (
-                <p className="text-sm text-primary-600 mb-2">
+                <p className="text-xs sm:text-sm text-primary-600 mb-2">
                   {donation.distance} km away
                 </p>
               )}
-              <p className="text-sm text-gray-500">
+              <p className="text-xs sm:text-sm text-gray-500">
                 <FiClock className="inline mr-1" />
                 Expires: {new Date(donation.expiryTime).toLocaleString()}
               </p>
@@ -200,29 +195,20 @@ const DonationsList = () => {
       {/* Map View */}
       {viewMode === 'map' && (
         <div className="card">
-          <LoadScript googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY}>
-            <GoogleMap
-              mapContainerStyle={mapContainerStyle}
-              center={
-                userLocation || {
-                  lat: donations[0]?.location?.coordinates?.lat || 0,
-                  lng: donations[0]?.location?.coordinates?.lng || 0
-                }
-              }
-              zoom={12}
-            >
-              {donations.map((donation) => (
-                <Marker
-                  key={donation._id}
-                  position={{
-                    lat: donation.location.coordinates.lat,
-                    lng: donation.location.coordinates.lng
-                  }}
-                  title={donation.foodName}
-                />
-              ))}
-            </GoogleMap>
-          </LoadScript>
+          <MapComponent
+            height="500px"
+            center={userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629]}
+            zoom={userLocation ? 12 : 5}
+            markers={donations
+              .filter(d => d.location?.coordinates?.lat != null && d.location?.coordinates?.lng != null)
+              .map(d => ({
+                lat: d.location.coordinates.lat,
+                lng: d.location.coordinates.lng,
+                title: d.foodName,
+                address: d.location.address,
+                type: 'donor'
+              }))}
+          />
         </div>
       )}
 

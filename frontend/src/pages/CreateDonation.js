@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
+import MapComponent from '../components/MapComponent';
 
 const CreateDonation = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
   const [formData, setFormData] = useState({
     foodName: '',
     foodType: 'vegetarian',
@@ -30,6 +31,31 @@ const CreateDonation = () => {
     },
     isEmergency: false
   });
+
+  useEffect(() => {
+    // Get user's current location on mount
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const loc = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setUserLocation(loc);
+          setFormData(prev => ({
+            ...prev,
+            location: {
+              ...prev.location,
+              coordinates: loc
+            }
+          }));
+        },
+        () => {
+          console.log('Location access denied, using default');
+        }
+      );
+    }
+  }, []);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -62,14 +88,14 @@ const CreateDonation = () => {
     }
   };
 
-  const handleMapClick = (e) => {
+  const handleMapClick = (latlng) => {
     setFormData({
       ...formData,
       location: {
         ...formData.location,
         coordinates: {
-          lat: e.latLng.lat(),
-          lng: e.latLng.lng()
+          lat: latlng.lat,
+          lng: latlng.lng
         }
       }
     });
@@ -79,16 +105,19 @@ const CreateDonation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          const loc = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setUserLocation(loc);
           setFormData({
             ...formData,
             location: {
               ...formData.location,
-              coordinates: {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude
-              }
+              coordinates: loc
             }
           });
+          toast.success('Location updated to current position');
         },
         () => {
           toast.error('Failed to get location');
@@ -276,35 +305,27 @@ const CreateDonation = () => {
               Use Current Location
             </button>
           </div>
-          <LoadScript googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY}>
-            <GoogleMap
-              mapContainerStyle={{ width: '100%', height: '400px' }}
-              center={
-                formData.location.coordinates.lat
-                  ? {
-                      lat: formData.location.coordinates.lat,
-                      lng: formData.location.coordinates.lng
-                    }
-                  : { lat: 0, lng: 0 }
-              }
-              zoom={formData.location.coordinates.lat ? 15 : 2}
-              onClick={handleMapClick}
-            >
-              {formData.location.coordinates.lat && (
-                <Marker
-                  position={{
-                    lat: formData.location.coordinates.lat,
-                    lng: formData.location.coordinates.lng
-                  }}
-                />
-              )}
-            </GoogleMap>
-          </LoadScript>
+          <MapComponent
+            height="400px"
+            onMapClick={handleMapClick}
+            selectedLocation={formData.location.coordinates}
+            markers={formData.location.coordinates.lat ? [{
+              lat: formData.location.coordinates.lat,
+              lng: formData.location.coordinates.lng,
+              title: 'Pickup Location',
+              type: 'donor'
+            }] : []}
+            center={userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629]}
+            zoom={userLocation ? 15 : 5}
+          />
           {formData.location.coordinates.lat && (
             <p className="text-sm text-gray-600 mt-2">
               Selected: {formData.location.coordinates.lat.toFixed(6)}, {formData.location.coordinates.lng.toFixed(6)}
             </p>
           )}
+          <p className="text-xs text-gray-500 mt-1">
+            Click on the map to set your pickup location. You can zoom and pan the map.
+          </p>
         </div>
 
         <div>

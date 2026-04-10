@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FiMapPin, FiClock, FiPackage, FiUser } from 'react-icons/fi';
+import { FiMapPin, FiClock, FiPackage, FiUser, FiTruck } from 'react-icons/fi';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MapComponent from '../components/MapComponent';
 import toast from 'react-hot-toast';
-import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
 
 const DonationDetail = () => {
   const { id } = useParams();
@@ -71,6 +71,19 @@ const DonationDetail = () => {
     }
   };
 
+  const handleRequestPickup = async () => {
+    try {
+      console.log('Requesting pickup for donation:', id);
+      const response = await axios.post(`${API_URL}/donations/${id}/request-pickup`);
+      console.log('Pickup request response:', response.data);
+      toast.success('Pickup request sent to volunteers!');
+      fetchDonation();
+    } catch (error) {
+      console.error('Pickup request error:', error);
+      toast.error(error.response?.data?.message || 'Failed to request pickup');
+    }
+  };
+
   const handleSubmitFeedback = async (e) => {
     e.preventDefault();
     try {
@@ -115,6 +128,7 @@ const DonationDetail = () => {
   }
 
   const canAccept = user && (user.role === 'receiver' || user.role === 'admin') && donation.status === 'pending';
+  const canRequestPickup = user && (user.role === 'receiver' || user.role === 'admin') && donation.status === 'accepted' && !donation.volunteerId;
   const canComplete = user && donation.status === 'picked' && (
     donation.receiverId?._id === user.id || donation.volunteerId?._id === user.id
   );
@@ -185,13 +199,24 @@ const DonationDetail = () => {
           </div>
         )}
 
-        {/* Donor Info */}
-        {donation.donorId && (
+        {/* Receiver Info */}
+        {donation.receiverId && (
           <div className="mb-6">
-            <h3 className="font-semibold mb-2">Donor</h3>
+            <h3 className="font-semibold mb-2">Accepted By</h3>
             <p className="text-gray-600 dark:text-gray-400">
               <FiUser className="inline mr-2" />
-              {donation.donorId.name || donation.donorId.organizationName}
+              {donation.receiverId.name || donation.receiverId.organizationName}
+            </p>
+          </div>
+        )}
+
+        {/* Volunteer Info */}
+        {donation.volunteerId && (
+          <div className="mb-6">
+            <h3 className="font-semibold mb-2">Volunteer</h3>
+            <p className="text-gray-600 dark:text-gray-400">
+              <FiTruck className="inline mr-2" />
+              {donation.volunteerId.name}
             </p>
           </div>
         )}
@@ -202,6 +227,16 @@ const DonationDetail = () => {
             <button onClick={handleAccept} className="btn-primary">
               Accept Donation
             </button>
+          )}
+          {canRequestPickup && (
+            <button onClick={handleRequestPickup} className="btn-success flex items-center gap-2">
+              <FiTruck /> Request Pickup
+            </button>
+          )}
+          {donation.pickupRequest?.status === 'pending' && (
+            <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm flex items-center gap-2">
+              <FiTruck /> Pickup Requested - Waiting for volunteer
+            </span>
           )}
           {canComplete && (
             <button onClick={handleComplete} className="btn-primary">
@@ -215,6 +250,18 @@ const DonationDetail = () => {
           )}
         </div>
       </div>
+
+      {/* Pickup Request Status */}
+      {donation.pickupRequest?.status === 'pending' && (
+        <div className="card mb-6 border-2 border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
+          <h2 className="text-xl font-semibold mb-2 flex items-center gap-2">
+            <FiTruck /> Pickup Request Pending
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            A pickup request has been sent to nearby volunteers. You'll be notified when a volunteer accepts.
+          </p>
+        </div>
+      )}
 
       {/* Admin: Edit donation */}
       {user?.role === 'admin' && (
@@ -242,26 +289,46 @@ const DonationDetail = () => {
         </div>
       )}
 
-      {/* Map */}
+      {/* Map with all locations */}
       <div className="card mb-6">
         <h2 className="text-xl font-semibold mb-4">Location</h2>
-        <LoadScript googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY}>
-          <GoogleMap
-            mapContainerStyle={{ width: '100%', height: '400px' }}
-            center={{
+        <MapComponent
+          height="400px"
+          center={[donation.location.coordinates.lat, donation.location.coordinates.lng]}
+          zoom={13}
+          markers={[
+            {
               lat: donation.location.coordinates.lat,
-              lng: donation.location.coordinates.lng
-            }}
-            zoom={15}
-          >
-            <Marker
-              position={{
-                lat: donation.location.coordinates.lat,
-                lng: donation.location.coordinates.lng
-              }}
-            />
-          </GoogleMap>
-        </LoadScript>
+              lng: donation.location.coordinates.lng,
+              title: `Donor: ${donation.donorId?.name || 'Donor'}`,
+              address: donation.location.address,
+              type: 'donor'
+            },
+            ...(donation.receiverId?.location?.coordinates ? [{
+              lat: donation.receiverId.location.coordinates.lat,
+              lng: donation.receiverId.location.coordinates.lng,
+              title: `NGO: ${donation.receiverId?.name || donation.receiverId?.organizationName || 'Receiver'}`,
+              address: donation.receiverId?.location?.address,
+              type: 'ngo'
+            }] : []),
+            ...(donation.volunteerLocation?.lat ? [{
+              lat: donation.volunteerLocation.lat,
+              lng: donation.volunteerLocation.lng,
+              title: `Volunteer: ${donation.volunteerId?.name || 'En route'}`,
+              type: 'volunteer',
+              timestamp: donation.volunteerLocation.updatedAt
+            }] : [])
+          ]}
+        />
+        <div className="flex flex-wrap gap-4 mt-3 text-sm">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-500"></span> Donor (Pickup)</span>
+          {donation.receiverId && (
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500"></span> NGO (Delivery)</span>
+          )}
+          {donation.volunteerId && (
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-500"></span> Volunteer</span>
+          )}
+        </div>
       </div>
 
       {/* Feedback Form */}

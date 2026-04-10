@@ -3,10 +3,10 @@ import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MapComponent from '../components/MapComponent';
 import toast from 'react-hot-toast';
 import { FiMapPin, FiPackage, FiCheckCircle, FiWifi, FiWifiOff } from 'react-icons/fi';
 import { format } from 'date-fns';
-import { GoogleMap, LoadScript, Marker, Polyline } from '@react-google-maps/api';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 const CACHE_KEY = (id) => `delivery_tracking_${id}`;
@@ -113,9 +113,44 @@ export default function DeliveryTracking() {
     );
   }
 
-  const { timeline, status, foodName, donorLocation, receiverLocation, volunteerLocation } = tracking;
-  const points = [donorLocation, volunteerLocation, receiverLocation].filter(Boolean).map((p) => ({ lat: p.lat, lng: p.lng }));
-  const center = points.length > 0 ? points[0] : { lat: 0, lng: 0 };
+  const { timeline, status, foodName, donorLocation, receiverLocation, volunteerLocation, pathHistory } = tracking;
+  
+  // Prepare markers for the map
+  const markers = [];
+  if (donorLocation) {
+    markers.push({
+      lat: donorLocation.lat,
+      lng: donorLocation.lng,
+      title: `Donor: ${tracking.donorName || 'Donor'}`,
+      address: donorLocation.address,
+      type: 'donor'
+    });
+  }
+  if (receiverLocation) {
+    markers.push({
+      lat: receiverLocation.lat,
+      lng: receiverLocation.lng,
+      title: `NGO: ${tracking.receiverName || 'Receiver'}`,
+      address: receiverLocation.address,
+      type: 'ngo'
+    });
+  }
+  if (volunteerLocation) {
+    markers.push({
+      lat: volunteerLocation.lat,
+      lng: volunteerLocation.lng,
+      title: `Volunteer: ${tracking.volunteerName || 'En route'}`,
+      type: 'volunteer',
+      timestamp: volunteerLocation.updatedAt
+    });
+  }
+
+  // Prepare path for the map
+  const path = pathHistory && pathHistory.length > 0 
+    ? pathHistory.map(p => ({ lat: p.lat, lng: p.lng }))
+    : [];
+
+  const center = markers.length > 0 ? [markers[0].lat, markers[0].lng] : [20.5937, 78.9629];
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -140,46 +175,21 @@ export default function DeliveryTracking() {
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Map - donor, NGO, volunteer with route */}
         <div className="lg:col-span-2 card overflow-hidden p-0">
-          <LoadScript googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY || ''}>
-            <GoogleMap
-              mapContainerStyle={mapContainerStyle}
-              center={center}
-              zoom={points.length ? 12 : 2}
-              options={{ mapTypeControl: true, streetViewControl: false }}
-            >
-              {donorLocation && (
-                <Marker
-                  position={{ lat: donorLocation.lat, lng: donorLocation.lng }}
-                  title={`Donor: ${tracking.donorName || 'Donor'}`}
-                  label={{ text: '🍽', fontSize: '18px' }}
-                />
-              )}
-              {receiverLocation && (
-                <Marker
-                  position={{ lat: receiverLocation.lat, lng: receiverLocation.lng }}
-                  title={`NGO: ${tracking.receiverName || 'Receiver'}`}
-                  label={{ text: '🏠', fontSize: '18px' }}
-                />
-              )}
-              {volunteerLocation && (
-                <Marker
-                  position={{ lat: volunteerLocation.lat, lng: volunteerLocation.lng }}
-                  title={`Volunteer: ${tracking.volunteerName || 'En route'}`}
-                  label={{ text: '🚚', fontSize: '18px' }}
-                />
-              )}
-              {points.length >= 2 && (
-                <Polyline
-                  path={points}
-                  options={{ strokeColor: '#3b82f6', strokeWeight: 4, strokeOpacity: 0.8 }}
-                />
-              )}
-            </GoogleMap>
-          </LoadScript>
+          <MapComponent
+            height="384px"
+            center={center}
+            zoom={markers.length > 1 ? 12 : 14}
+            markers={markers}
+            showPath={path.length > 1}
+            path={path}
+          />
           <div className="p-3 bg-gray-50 dark:bg-gray-800 border-t flex flex-wrap gap-2">
             <span className="flex items-center gap-1 text-sm"><span className="w-3 h-3 rounded-full bg-orange-500" /> Donor (pickup)</span>
             <span className="flex items-center gap-1 text-sm"><span className="w-3 h-3 rounded-full bg-green-500" /> NGO</span>
             <span className="flex items-center gap-1 text-sm"><span className="w-3 h-3 rounded-full bg-blue-500" /> Volunteer</span>
+            {path.length > 1 && (
+              <span className="flex items-center gap-1 text-sm"><span className="w-8 h-1 bg-blue-500" /> Path traveled</span>
+            )}
           </div>
         </div>
 
@@ -217,6 +227,38 @@ export default function DeliveryTracking() {
           </div>
         </div>
       </div>
+
+      {/* Path History */}
+      {path.length > 0 && (
+        <div className="card mt-6">
+          <h2 className="text-xl font-semibold mb-4">Path History</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            {path.length} location points recorded during delivery
+          </p>
+          <div className="max-h-48 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th className="px-4 py-2 text-left">Time</th>
+                  <th className="px-4 py-2 text-left">Latitude</th>
+                  <th className="px-4 py-2 text-left">Longitude</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pathHistory.slice().reverse().map((point, idx) => (
+                  <tr key={idx} className="border-b dark:border-gray-700">
+                    <td className="px-4 py-2">
+                      {point.timestamp ? format(new Date(point.timestamp), 'MMM d, HH:mm:ss') : 'N/A'}
+                    </td>
+                    <td className="px-4 py-2">{point.lat.toFixed(6)}</td>
+                    <td className="px-4 py-2">{point.lng.toFixed(6)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {user && tracking?.volunteerId && String(user.id || user._id) === String(tracking.volunteerId) && (
         <div className="card mt-6 flex flex-wrap items-center gap-4">

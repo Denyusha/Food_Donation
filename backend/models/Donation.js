@@ -85,6 +85,21 @@ const donationSchema = new mongoose.Schema({
     lng: Number,
     updatedAt: Date
   },
+  pathHistory: [{
+    lat: Number,
+    lng: Number,
+    timestamp: { type: Date, default: Date.now },
+    type: { type: String, enum: ['volunteer', 'system'], default: 'volunteer' }
+  }],
+  pickupRequest: {
+    requestedAt: { type: Date },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    status: { 
+      type: String, 
+      enum: ['pending', 'accepted', 'declined', null],
+      default: null 
+    }
+  },
   feedback: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Feedback',

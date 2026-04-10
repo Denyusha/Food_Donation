@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+@import 'leaflet/dist/leaflet.css';
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -25,6 +27,14 @@ code {
     @apply bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors font-medium;
   }
   
+  .btn-success {
+    @apply bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors font-medium;
+  }
+  
+  .btn-danger {
+    @apply bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium;
+  }
+  
   .card {
     @apply bg-white dark:bg-gray-800 rounded-lg shadow-md p-6;
   }
@@ -32,5 +42,29 @@ code {
   .input-field {
     @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white;
   }
+}
+
+/* Leaflet Map Custom Styles */
+.leaflet-container {
+  font-family: inherit;
+}
+
+.custom-marker {
+  background: transparent;
+  border: none;
+}
+
+/* Timeline styles for delivery tracking */
+.timeline-connector {
+  position: absolute;
+  left: 15px;
+  top: 30px;
+  bottom: -10px;
+  width: 2px;
+  background: #e5e7eb;
+}
+
+.dark .timeline-connector {
+  background: #374151;
 }
 
